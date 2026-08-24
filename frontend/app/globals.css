@@ -1,0 +1,84 @@
+/* /* @import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+} */
+
+@import "tailwindcss";
+
+/* Ensure dark mode works with both class and data-theme approaches */
+:root, [data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+/* Manual dark mode fallbacks */
+.dark body {
+  background-color: #111827 !important;
+  color: #f9fafb !important;
+}
+
+.dark .dark\:bg-gray-900 {
+  background-color: #111827 !important;
+}
+
+.dark .dark\:bg-gray-800 {
+  background-color: #1f2937 !important;
+}
+
+.dark .dark\:bg-gray-700 {
+  background-color: #374151 !important;
+}
+
+.dark .dark\:text-white {
+  color: white !important;
+}
+
+.dark .dark\:text-gray-300 {
+  color: #d1d5db !important;
+}
+
+.dark .dark\:border-gray-700 {
+  border-color: #374151 !important;
+}
+
+.dark .dark\:border-gray-600 {
+  border-color: #4b5563 !important;
+}
+
+/* Smooth transitions */
+* {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
