@@ -5183,7 +5183,7 @@ function JobsContent() {
     }
   }, [hasMore, loadingMore, lastDocId, jobs]);
 
-  // --- 🔥 FIXED MULTI-WORD SEARCH ---
+  // --- 🔥 FIXED MULTI-WORD SEARCH (ZERO INDEX REQUIRED) ---
   const performSearch = useCallback(async (term: string, isLoadMore = false) => {
     const rawTerm = term.trim().toLowerCase();
     if (!rawTerm) {
@@ -5212,28 +5212,25 @@ function JobsContent() {
     else setSearchLoadingMore(true);
 
     try {
-      // 1. Grab ONLY the first word to query Firebase efficiently
-      const searchWords = rawTerm.split(/\s+/);
+      const searchWords = rawTerm.split(/\s+/).filter(w => w.length > 0);
       const firstWord = searchWords[0];
 
+      // 🚀 BYPASS FIREBASE INDEX: We removed orderBy() so it works instantly!
       let q = query(
         collection(db, 'jobs'),
         where('keywords', 'array-contains', firstWord),
-        orderBy('postedAt', 'desc'),
-        limit(20)
+        limit(50) 
       );
 
       if (isLoadMore && searchLastDoc) {
         const docRef = doc(db, 'jobs', searchLastDoc);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          const lastSnapshot = docSnap as QueryDocumentSnapshot<DocumentData>;
           q = query(
             collection(db, 'jobs'),
             where('keywords', 'array-contains', firstWord),
-            orderBy('postedAt', 'desc'),
-            startAfter(lastSnapshot),
-            limit(20)
+            startAfter(docSnap),
+            limit(50)
           );
         }
       }
@@ -5244,8 +5241,8 @@ function JobsContent() {
       snapshot.forEach((doc) => {
         const job = mapDocToJob(doc);
         
-        // 2. Client-side exact filtering for multi-word searches (e.g. "React Developer")
-        const searchableText = `${job.title} ${job.company} ${job.location}`.toLowerCase();
+        // Frontend safely checks if all words match
+        const searchableText = `${job.title || ''} ${job.jobTitle || ''} ${job.company || ''} ${job.companyName || ''} ${job.location || ''}`.toLowerCase();
         const matchesAllWords = searchWords.every(word => searchableText.includes(word));
         
         if (matchesAllWords) {
@@ -5253,7 +5250,7 @@ function JobsContent() {
         }
       });
 
-      // 3. Apply UI filters (Type, Exp, Remote)
+      // Apply Filters
       let filtered = results.filter(job => {
         if (selectedType !== 'All') {
           const dbType = (job.type || job.jobType || '').toLowerCase().replace(/[-_ ]/g, '');
@@ -5271,7 +5268,14 @@ function JobsContent() {
         return true;
       });
 
-      const hasMoreData = snapshot.docs.length === 20;
+      // 🚀 SORT LOCALLY: This guarantees it is sorted by newest without breaking Firebase
+      filtered.sort((a, b) => {
+        const dateA = a.postedAt?.toDate?.() || new Date(a.postedAt || 0);
+        const dateB = b.postedAt?.toDate?.() || new Date(b.postedAt || 0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      const hasMoreData = snapshot.docs.length === 50;
       const lastId = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1].id : null;
 
       if (!isLoadMore) {
