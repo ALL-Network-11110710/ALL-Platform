@@ -4915,20 +4915,29 @@
 // }
 
 
+
+// ############################# Publish version 2 #############################
+// ############################# Publish version 2 #############################
+// ############################# Publish version 2 #############################
+// ############################# Publish version 2 #############################
+// ############################# Publish version 2 #############################
+// ############################# Publish version 2 #############################
+
+
+
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   collection, getDocs, orderBy, query, limit, startAfter, 
-  QueryDocumentSnapshot, DocumentData, doc, getDoc,
-  startAt, endAt
+  QueryDocumentSnapshot, DocumentData, doc, getDoc, where
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import Link from 'next/link';
 import ClientErrorBoundary from '@/components/ClientErrorBoundary';
 import { 
   Search, MapPin, Briefcase, DollarSign, Clock, Filter, 
-  ExternalLink, Building, X, CheckCircle2, 
+  ExternalLink, X, CheckCircle2, 
   RefreshCw, TrendingUp, ChevronRight, Loader2, ArrowLeft
 } from 'lucide-react';
 
@@ -4953,6 +4962,7 @@ interface Job {
   education?: string;
   remote?: boolean;
   isActive?: boolean;
+  keywords?: string[];
 }
 
 // --- Cache Helpers ---
@@ -5057,6 +5067,7 @@ const mapDocToJob = (doc: QueryDocumentSnapshot<DocumentData>): Job => {
     experience: data.experience || '',
     remote: data.remote || false,
     isActive: data.isActive !== undefined ? data.isActive : true,
+    keywords: data.keywords || [],
   };
 };
 
@@ -5089,7 +5100,6 @@ function JobsContent() {
   const [hasMore, setHasMore] = useState(true);
   const [lastDocId, setLastDocId] = useState<string | null>(null);
   
-  // Search Results State
   const [searchResults, setSearchResults] = useState<Job[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchHasMore, setSearchHasMore] = useState(false);
@@ -5097,7 +5107,6 @@ function JobsContent() {
   const [searchLoadingMore, setSearchLoadingMore] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
   
-  // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState<string>('All');
   const [selectedExp, setSelectedExp] = useState<string>('All');
@@ -5107,7 +5116,7 @@ function JobsContent() {
   const isFirstLoad = useRef(true);
   const popularTags = ["React", "Remote", "Marketing", "Product Manager", "Entry Level"];
 
-  // --- MAIN FETCH (browse mode) ---
+  // --- BROWSING MODE ---
   const fetchJobs = useCallback(async (isRefresh = false) => {
     const cacheKey = getCacheKey('jobs', '');
     if (!isRefresh && typeof window !== 'undefined') {
@@ -5174,10 +5183,10 @@ function JobsContent() {
     }
   }, [hasMore, loadingMore, lastDocId, jobs]);
 
-  // --- 🔥 SEARCH FUNCTION (Fixed) ---
+  // --- 🔥 FIXED MULTI-WORD SEARCH ---
   const performSearch = useCallback(async (term: string, isLoadMore = false) => {
-    const trimmedTerm = term.trim();
-    if (!trimmedTerm) {
+    const rawTerm = term.trim().toLowerCase();
+    if (!rawTerm) {
       setIsSearchMode(false);
       setSearchResults([]);
       setSearchHasMore(false);
@@ -5186,7 +5195,7 @@ function JobsContent() {
     }
 
     setIsSearchMode(true);
-    const cacheKey = getCacheKey('search', trimmedTerm);
+    const cacheKey = getCacheKey('search', rawTerm);
 
     if (!isLoadMore) {
       const cached = getCachedData(cacheKey);
@@ -5203,39 +5212,49 @@ function JobsContent() {
     else setSearchLoadingMore(true);
 
     try {
-      // Generate case variants
-      const variants = [
-        trimmedTerm,
-        trimmedTerm.toLowerCase(),
-        trimmedTerm.charAt(0).toUpperCase() + trimmedTerm.slice(1).toLowerCase()
-      ];
-      const uniqueVariants = [...new Set(variants)];
-      const fields = ['title', 'jobTitle'];
-      const limitPerQuery = 20;
+      // 1. Grab ONLY the first word to query Firebase efficiently
+      const searchWords = rawTerm.split(/\s+/);
+      const firstWord = searchWords[0];
 
-      let allResults: Job[] = [];
+      let q = query(
+        collection(db, 'jobs'),
+        where('keywords', 'array-contains', firstWord),
+        orderBy('postedAt', 'desc'),
+        limit(20)
+      );
 
-      for (const field of fields) {
-        for (const variant of uniqueVariants) {
-          const q = query(
+      if (isLoadMore && searchLastDoc) {
+        const docRef = doc(db, 'jobs', searchLastDoc);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const lastSnapshot = docSnap as QueryDocumentSnapshot<DocumentData>;
+          q = query(
             collection(db, 'jobs'),
-            orderBy(field),
-            startAt(variant),
-            endAt(variant + '\uf8ff'),
-            limit(limitPerQuery)
+            where('keywords', 'array-contains', firstWord),
+            orderBy('postedAt', 'desc'),
+            startAfter(lastSnapshot),
+            limit(20)
           );
-          const snapshot = await getDocs(q);
-          snapshot.forEach((doc) => {
-            const job = mapDocToJob(doc);
-            if (!allResults.some(j => j.id === job.id)) {
-              allResults.push(job);
-            }
-          });
         }
       }
 
-      // Client-side filters
-      let filtered = allResults.filter(job => {
+      const snapshot = await getDocs(q);
+      let results: Job[] = [];
+      
+      snapshot.forEach((doc) => {
+        const job = mapDocToJob(doc);
+        
+        // 2. Client-side exact filtering for multi-word searches (e.g. "React Developer")
+        const searchableText = `${job.title} ${job.company} ${job.location}`.toLowerCase();
+        const matchesAllWords = searchWords.every(word => searchableText.includes(word));
+        
+        if (matchesAllWords) {
+            results.push(job);
+        }
+      });
+
+      // 3. Apply UI filters (Type, Exp, Remote)
+      let filtered = results.filter(job => {
         if (selectedType !== 'All') {
           const dbType = (job.type || job.jobType || '').toLowerCase().replace(/[-_ ]/g, '');
           const filterType = selectedType.toLowerCase().replace(/[-_ ]/g, '');
@@ -5252,29 +5271,20 @@ function JobsContent() {
         return true;
       });
 
-      // Sort by postedAt
-      filtered.sort((a, b) => {
-        const dateA = a.postedAt?.toDate?.() || new Date(a.postedAt);
-        const dateB = b.postedAt?.toDate?.() || new Date(b.postedAt);
-        return dateB.getTime() - dateA.getTime();
-      });
-
-      // For pagination, we slice first 20, but we'll keep all for "Load More"
-      const displayResults = filtered.slice(0, 20);
-      const hasMoreData = filtered.length > 20;
-      const lastId = displayResults.length > 0 ? displayResults[displayResults.length - 1].id : null;
+      const hasMoreData = snapshot.docs.length === 20;
+      const lastId = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1].id : null;
 
       if (!isLoadMore) {
-        setSearchResults(displayResults);
+        setSearchResults(filtered);
         setSearchHasMore(hasMoreData);
         setSearchLastDoc(lastId);
-        setCachedData(cacheKey, displayResults, hasMoreData, lastId);
+        setCachedData(cacheKey, filtered, hasMoreData, lastId);
       } else {
-        // Load more: we already have all results, so show all
-        setSearchResults(filtered);
-        setSearchHasMore(false);
-        setSearchLastDoc(null);
-        setCachedData(cacheKey, filtered, false, null);
+        const combined = [...searchResults, ...filtered];
+        setSearchResults(combined);
+        setSearchHasMore(hasMoreData);
+        setSearchLastDoc(lastId);
+        setCachedData(cacheKey, combined, hasMoreData, lastId);
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -5284,17 +5294,16 @@ function JobsContent() {
       if (!isLoadMore) setSearchLoading(false);
       else setSearchLoadingMore(false);
     }
-  }, [selectedType, selectedExp, remoteOnly]);
+  }, [selectedType, selectedExp, remoteOnly, searchLastDoc, searchResults]);
 
-  // --- Load More for Search ---
+  // --- Search Load More ---
   const loadMoreSearch = useCallback(async () => {
-    // Since we already fetched all results in the first search, we just show all
-    if (searchHasMore) {
-      // Re-run search without pagination limit
-      await performSearch(searchTerm, true);
-    }
-  }, [searchHasMore, searchTerm, performSearch]);
+    if (!searchHasMore || searchLoadingMore) return;
+    if (!searchTerm.trim()) return;
+    await performSearch(searchTerm.trim(), true);
+  }, [searchHasMore, searchLoadingMore, searchTerm, performSearch]);
 
+  // --- Refresh ---
   const refreshJobs = () => {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(getCacheKey('jobs', ''));
@@ -5309,13 +5318,14 @@ function JobsContent() {
     fetchJobs(true);
   };
 
+  // --- Search Input Handlers ---
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchTerm(value);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
       if (value.trim()) {
-        performSearch(value, false);
+        performSearch(value.trim(), false);
       } else {
         setIsSearchMode(false);
         setSearchResults([]);
@@ -5337,6 +5347,15 @@ function JobsContent() {
     }
   };
 
+  // --- Re-run search when filters change ---
+  useEffect(() => {
+    if (isSearchMode && searchTerm.trim()) {
+      performSearch(searchTerm.trim(), false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedType, selectedExp, remoteOnly]);
+
+  // --- Initial Load ---
   useEffect(() => {
     if (isFirstLoad.current) {
       isFirstLoad.current = false;
@@ -5359,7 +5378,6 @@ function JobsContent() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
   };
 
-  // Determine display data
   const displayJobs = isSearchMode ? searchResults : jobs;
   const displayLoading = isSearchMode ? searchLoading : loading;
   const displayHasMore = isSearchMode ? searchHasMore : hasMore;
@@ -5398,7 +5416,7 @@ function JobsContent() {
         </div>
       </div>
 
-      {/* Hero Section with Search */}
+      {/* Hero Section */}
       <div className="bg-white border-b border-neutral-200 pt-8 pb-12 px-6 shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500 rounded-full blur-[100px] opacity-10 pointer-events-none"></div>
         <div className="absolute bottom-0 left-10 w-48 h-48 bg-blue-500 rounded-full blur-[100px] opacity-5 pointer-events-none"></div>
